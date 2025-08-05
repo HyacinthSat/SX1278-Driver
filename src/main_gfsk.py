@@ -211,10 +211,10 @@ def sx1278_init(air_frequency, air_bitrate, module_depth):
     write_reg_bit(REG_OP_MODE, 3, 0)  # 设置为 LF 低频段 (UHF 低)
 
     # 设置波特率
-    sx1278_set_freqdev((air_bitrate * module_depth)/2)
+    sx1278_set_bitrate(air_bitrate)
 
     # 设置频偏
-    sx1278_set_freqdev(2400)
+    sx1278_set_freqdev((air_bitrate * module_depth)/2)
 
     # 设置载波频率
     sx1278_set_frequency(air_frequency)
@@ -422,7 +422,7 @@ print(f"芯片完整修订版本号: {ver >> 4}")
 print(f"金属掩膜修订版本号: {ver & 0x0F}\n")
 
 print("工作初始化\n")
-sx1278_init(air_frequency=435400000, air_bitrate=1200, module_depth=1.0)
+sx1278_init(air_frequency=435400000, air_bitrate=4800, module_depth=1.0)
 
 print("开始测试发送随机数据包\n")
 while True:
