@@ -248,24 +248,24 @@ def sx1278_init(air_frequency, air_bitrate, module_depth):
     write_reg_bit(REG_OSC, 3, 1)  # 触发 RC 振荡器校准
 
     # 设置 REG_PREAMBLE_MSB 寄存器，设置前导码长度
-    write_reg_bit(REG_PREAMBLE_MSB, 7, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 6, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 5, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 4, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 3, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 2, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 1, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 0, 0)  # 设置前导码长度为 8 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 7, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 6, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 5, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 4, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 3, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 2, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 1, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_MSB, 0, 0)  # 设置前导码长度为 32 字节
 
     # 设置 REG_PREAMBLE_LSB 寄存器，设置前导码长度
-    write_reg_bit(REG_PREAMBLE_LSB, 7, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 6, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 5, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 4, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 3, 1)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 2, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 1, 0)  # 设置前导码长度为 8 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 0, 0)  # 设置前导码长度为 8 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 7, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 6, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 5, 1)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 4, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 3, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 2, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 1, 0)  # 设置前导码长度为 32 字节
+    write_reg_bit(REG_PREAMBLE_LSB, 0, 0)  # 设置前导码长度为 32 字节
 
     # 设置 REG_SYNC_CONFIG 寄存器，设置同步字
     write_reg_bit(REG_SYNC_CONFIG, 7, 0)  # 收到完整数据包后 RestartRxWithoutPllLock
@@ -361,12 +361,16 @@ def sx1278_send(data):
     else:
         print("TX 模式：PA 斜升完成\n")
 
+    # 设置有效数据长度
+    write_reg(REG_PAYLOAD_LENGTH, len(data))
+    
     # 写入所有数据字节到 FIFO
     for b in data:
         write_reg(REG_FIFO, b)
+        # FIFO 到达门限，等待芯片发送数据以腾出空间
+        while read_reg_bit(REG_IRQ_FLAGS2, 5) == 1:
+            time.sleep_ms(10) 
 
-    # 设置有效数据长度
-    write_reg(REG_PAYLOAD_LENGTH, len(data))
     # 读取 IRQ_FLAGS2 寄存器中的第 3 位验证是否发送完成
     n = 0
     while (read_reg_bit(REG_IRQ_FLAGS2, 3)) == 0 and n <= 20:
@@ -396,20 +400,21 @@ def sx1278_send(data):
 """ 主程序 """
 
 # 上电后等待稳定
-time.sleep(2)
+time.sleep(1)
 
 # 完全硬复位
 print("芯片硬复位")
 sx1278_reset()
 
 # 等待复位完成
-time.sleep(2)
+time.sleep(1)
 
 # 初始化SPI通信
 print("尝试建立 SPI 通信")
 spi = SPI(1, baudrate=SPI_BAUD, polarity=0, phase=0, sck=sck, mosi=mosi, miso=miso)
 
 # 验证通信是否成功
+time.sleep(0.5)
 ver = read_reg(REG_VERSION)
 if ver != 0x00 and ver != 0xFF:
     print("SPI 通信建立成功\n")
@@ -422,7 +427,7 @@ print(f"芯片完整修订版本号: {ver >> 4}")
 print(f"金属掩膜修订版本号: {ver & 0x0F}\n")
 
 print("工作初始化\n")
-sx1278_init(air_frequency=435400000, air_bitrate=4800, module_depth=1.0)
+sx1278_init(air_frequency=435400000, air_bitrate=4800, module_depth=0.5)
 
 print("开始测试发送随机数据包\n")
 while True:
@@ -436,4 +441,4 @@ while True:
     
     sx1278_send(msg)
 
-    time.sleep(0)
+    time.sleep(0.5)
