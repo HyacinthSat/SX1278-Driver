@@ -7,9 +7,11 @@ SCK     --------> GP10 (SPI1 SCK)
 MOSI    --------> GP11 (SPI1 TX)
 MISO    --------> GP12 (SPI1 RX)
 RST     --------> GP8
+DIO2    --------> GP9 (PTT)
 """
 
 from machine import Pin, SPI
+from morse import AutoMorse
 import random
 import time
 
@@ -54,6 +56,8 @@ REG_IRQ_FLAGS1      =  0x3E  # 中断标志 1
 REG_IRQ_FLAGS2      =  0x3F  # 中断标志 2
 ## 版本寄存器
 REG_VERSION         =  0x42  # 版本寄存器
+## 附加寄存器
+REG_PA_DAC          =  0x4D  # PA 输出功率增强
 
 # 硬件基本定义
 F_XOSC   = 32000000 # 晶体振荡器频率
@@ -62,6 +66,7 @@ SPI_BAUD = 5000000  # SPI通信波特率
 # 定义基本引脚
 nss  = Pin(13, Pin.OUT)
 rst  = Pin(8, Pin.OUT)
+ptt  = Pin(9, Pin.OUT)
 sck  = Pin(10)
 mosi = Pin(11)
 miso = Pin(12)
@@ -141,27 +146,6 @@ def sx1278_set_frequency(freq_hz):
     print(f"寄存器写入值：0x{F_rf:04X}")
     print(f"寄存器读取值：0x{F_rf_read:06X}\n")
 
-# 设置频偏频率（Hz）
-def sx1278_set_freqdev(freqdev_hz):
-
-    # 计算寄存器值
-    F_STEP = F_XOSC / 2**19
-    F_dev = int(freqdev_hz / F_STEP)
-
-    write_reg(REG_FDEV_MSB, (F_dev >> 8) & 0xFF)
-    write_reg(REG_FDEV_LSB, F_dev & 0xFF)
-
-    # 读取回频率偏移寄存器以验证
-    msb = read_reg(REG_FDEV_MSB)
-    lsb = read_reg(REG_FDEV_LSB)
-    F_dev_read = (msb << 8) | lsb
-    actual_freqdev = F_dev_read * F_STEP
-
-    print("设定频偏：", freqdev_hz, "Hz")
-    print("实际频偏：", int(actual_freqdev), "Hz")
-    print(f"寄存器写入值：0x{F_dev:04X}")
-    print(f"寄存器读取值：0x{F_dev_read:04X}\n")
-
 # 设置空中比特率
 def sx1278_set_bitrate(bps):
 
@@ -184,110 +168,46 @@ def sx1278_set_bitrate(bps):
     print(f"寄存器读取值：0x{read_bitrate_reg_value:04X}\n")
 
 # SX1278 初始化
-def sx1278_init(air_frequency, air_bitrate, module_depth):
-
-    """
-    # 设置 REG_OP_MODE 寄存器，进入 Sleep 模式
-    print("尝试设置为睡眠模式")
-    write_reg_bit(REG_OP_MODE, 2, 0)  # 设置为睡眠模式
-    write_reg_bit(REG_OP_MODE, 1, 0)  # 设置为睡眠模式
-    write_reg_bit(REG_OP_MODE, 0, 0)  # 设置为睡眠模式
-    # 读取 IRQ_FLAGS1 寄存器中的第 7 位验证是否准备完成
-    n = 0
-    while (read_reg_bit(REG_IRQ_FLAGS1, 7)) == 0 and n <= 20:
-        time.sleep_ms(100)
-        n = n + 1
-    if n >= 10:
-        print("未进入睡眠模式：", hex(read_reg(REG_IRQ_FLAGS1)))
-    else:
-        print("已进入睡眠模式\n")
-    """
+def sx1278_init(air_frequency):
     
-    # 设置 REG_OP_MODE 寄存器，进入 FSK 模式
+    # 设置 REG_OP_MODE 寄存器，进入 OOK 模式
     write_reg_bit(REG_OP_MODE, 7, 0)  # 设置为 FSK/OOK 模式
-    write_reg_bit(REG_OP_MODE, 6, 0)  # 设置为 FSK 模式
-    write_reg_bit(REG_OP_MODE, 5, 0)  # 设置为 FSK 模式
+    write_reg_bit(REG_OP_MODE, 6, 0)  # 设置为 OOK 模式
+    write_reg_bit(REG_OP_MODE, 5, 1)  # 设置为 OOK 模式
     write_reg_bit(REG_OP_MODE, 3, 0)  # 设置为 LF 低频段 (UHF 低)
 
     # 设置波特率
-    sx1278_set_bitrate(air_bitrate)
-
-    # 设置频偏
-    sx1278_set_freqdev((air_bitrate * module_depth)/2)
+    sx1278_set_bitrate(2000)
 
     # 设置载波频率
     sx1278_set_frequency(air_frequency)
 
     # 设置 REG_PA_CONFIG 寄存器，调整功放配置
     write_reg_bit(REG_PA_CONFIG, 7, 1)  # 设置输出为 PA_BOOST
-    write_reg_bit(REG_PA_CONFIG, 3, 1)  # 设置输出功率衰减为 2 dBm (15dBm)
-    write_reg_bit(REG_PA_CONFIG, 2, 1)  # 设置输出功率衰减为 2 dBm (15dBm)
-    write_reg_bit(REG_PA_CONFIG, 1, 1)  # 设置输出功率衰减为 2 dBm (15dBm)
-    write_reg_bit(REG_PA_CONFIG, 0, 1)  # 设置输出功率衰减为 2 dBm (15dBm)
+    write_reg_bit(REG_PA_CONFIG, 3, 1)  # 设置输出功率衰减为 0 dBm (17dBm)
+    write_reg_bit(REG_PA_CONFIG, 2, 1)  # 设置输出功率衰减为 0 dBm (17dBm)
+    write_reg_bit(REG_PA_CONFIG, 1, 1)  # 设置输出功率衰减为 0 dBm (17dBm)
+    write_reg_bit(REG_PA_CONFIG, 0, 1)  # 设置输出功率衰减为 0 dBm (17dBm)
 
-    # 设置 REG_Pa_Ramp 寄存器，调整功率放大器整形与斜升/斜降时间
-    write_reg_bit(REG_PA_RAMP, 6, 1)  # FSK 高斯滤波器BT = 0.5
-    write_reg_bit(REG_PA_RAMP, 5, 0)  # FSK 高斯滤波器BT = 0.5
-    write_reg_bit(REG_PA_RAMP, 3, 1)  # 斜升/斜降时间 40us
-    write_reg_bit(REG_PA_RAMP, 2, 0)  # 斜升/斜降时间 40us
-    write_reg_bit(REG_PA_RAMP, 1, 0)  # 斜升/斜降时间 40us
-    write_reg_bit(REG_PA_RAMP, 0, 1)  # 斜升/斜降时间 40us
+    # 设置 REG_Pa_Ramp 寄存器，调整功率放大器整形
+    write_reg_bit(REG_PA_RAMP, 6, 1)  # OOK fcutoff滤波 = 比特率 
+    write_reg_bit(REG_PA_RAMP, 5, 0)  # OOK fcutoff滤波 = 比特率
 
     # 设置 REG_OCP 寄存器，调整过流保护
     write_reg_bit(REG_OCP, 5, 1)  # 开启过流保护
-    write_reg_bit(REG_OCP, 4, 0)  # 设置最大电流限制为 120mA
-    write_reg_bit(REG_OCP, 3, 1)  # 设置最大电流限制为 120mA
-    write_reg_bit(REG_OCP, 2, 1)  # 设置最大电流限制为 120mA
-    write_reg_bit(REG_OCP, 1, 1)  # 设置最大电流限制为 120mA
-    write_reg_bit(REG_OCP, 0, 1)  # 设置最大电流限制为 120mA
-
-    # 接收机暂不处理
+    write_reg_bit(REG_OCP, 4, 1)  # 设置最大电流限制为 240mA
+    write_reg_bit(REG_OCP, 3, 1)  # 设置最大电流限制为 240mA
+    write_reg_bit(REG_OCP, 2, 0)  # 设置最大电流限制为 240mA
+    write_reg_bit(REG_OCP, 1, 1)  # 设置最大电流限制为 240mA
+    write_reg_bit(REG_OCP, 0, 1)  # 设置最大电流限制为 240mA
 
     # 设置 REG_OSC 寄存器，校准 RC 振荡器
     write_reg_bit(REG_OSC, 3, 1)  # 触发 RC 振荡器校准
 
-    # 设置 REG_PREAMBLE_MSB 寄存器，设置前导码长度
-    write_reg_bit(REG_PREAMBLE_MSB, 7, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 6, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 5, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 4, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 3, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 2, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 1, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_MSB, 0, 0)  # 设置前导码长度为 32 字节
-
-    # 设置 REG_PREAMBLE_LSB 寄存器，设置前导码长度
-    write_reg_bit(REG_PREAMBLE_LSB, 7, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 6, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 5, 1)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 4, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 3, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 2, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 1, 0)  # 设置前导码长度为 32 字节
-    write_reg_bit(REG_PREAMBLE_LSB, 0, 0)  # 设置前导码长度为 32 字节
-
     # 设置 REG_SYNC_CONFIG 寄存器，设置同步字
-    write_reg_bit(REG_SYNC_CONFIG, 7, 0)  # 收到完整数据包后 RestartRxWithoutPllLock
-    write_reg_bit(REG_SYNC_CONFIG, 6, 1)  # 收到完整数据包后 RestartRxWithoutPllLock
-    write_reg_bit(REG_SYNC_CONFIG, 5, 1)  # 设置前导码极性为 0x55
-    write_reg_bit(REG_SYNC_CONFIG, 4, 1)  # 设置同步字状态为 启用
-    write_reg_bit(REG_SYNC_CONFIG, 2, 1)  # 设置同步字长度为 8 字节
-    write_reg_bit(REG_SYNC_CONFIG, 1, 1)  # 设置同步字长度为 8 字节
-    write_reg_bit(REG_SYNC_CONFIG, 0, 1)  # 设置同步字长度为 8 字节
-
-    # 设置 REG_SYNC_VALUE 寄存器，设置同步字
-    # CCSDS 建议的同步字(ASM)为 0x1ACFFC1D, 按规定扰码后为 0x56C4D06BDAA431FE
-    write_reg(REG_SYNC_VALUE1, 0x56)
-    write_reg(REG_SYNC_VALUE2, 0xC4)
-    write_reg(REG_SYNC_VALUE3, 0xD0)
-    write_reg(REG_SYNC_VALUE4, 0x6B)
-    write_reg(REG_SYNC_VALUE5, 0xDA)
-    write_reg(REG_SYNC_VALUE6, 0xA4)
-    write_reg(REG_SYNC_VALUE7, 0x31)
-    write_reg(REG_SYNC_VALUE8, 0xFE)
+    write_reg_bit(REG_SYNC_CONFIG, 4, 0)  # 设置同步字状态为 关闭
 
     # 设置 REG_PACKET_CONFIG1 寄存器，设置数据包参数
-    write_reg_bit(REG_PACKET_CONFIG1, 7, 0)  # 设置数据包格式为 固定长度
     write_reg_bit(REG_PACKET_CONFIG1, 6, 0)  # 设置 DC 消除编解码方式为 无
     write_reg_bit(REG_PACKET_CONFIG1, 5, 0)  # 设置 DC 消除编解码方式为 无
     write_reg_bit(REG_PACKET_CONFIG1, 4, 0)  # 设置 CRC 校验使能为 关闭
@@ -295,22 +215,12 @@ def sx1278_init(air_frequency, air_bitrate, module_depth):
     write_reg_bit(REG_PACKET_CONFIG1, 1, 0)  # 设置地址过滤为 无过滤
 
     # 设置 REG_PACKET_CONFIG2 寄存器，设置数据包参数
-    write_reg_bit(REG_PACKET_CONFIG2, 6, 1)  # 设置数据处理模式为 数据包模式
-    write_reg_bit(REG_PACKET_CONFIG2, 2, 0)  # 设置数据包长度为 255 字节
-    write_reg_bit(REG_PACKET_CONFIG2, 1, 0)  # 设置数据包长度为 255 字节
-    write_reg_bit(REG_PACKET_CONFIG2, 0, 0)  # 设置数据包长度为 255 字节
-
-    # 设置 REG_PAYLOAD_LENGTH 寄存器，设置数据包长度
-    write_reg(REG_PAYLOAD_LENGTH, 0xFF)      # 设置数据包长度为 255 字节
-
-    # 设置 REG_FIFO_THRESH 寄存器，设置 FIFO 门限
-    write_reg_bit(REG_FIFO_THRESH, 7, 0)  # 设置 FIFO 触发条件为 FifoLevel
-    write_reg_bit(REG_FIFO_THRESH, 5, 1)  # 设置 FifoLevel 中断门限为 32 字节
-    write_reg_bit(REG_FIFO_THRESH, 4, 0)  # 设置 FifoLevel 中断门限为 32 字节
-    write_reg_bit(REG_FIFO_THRESH, 3, 0)  # 设置 FifoLevel 中断门限为 32 字节
-    write_reg_bit(REG_FIFO_THRESH, 2, 0)  # 设置 FifoLevel 中断门限为 32 字节
-    write_reg_bit(REG_FIFO_THRESH, 1, 0)  # 设置 FifoLevel 中断门限为 32 字节
-    write_reg_bit(REG_FIFO_THRESH, 0, 0)  # 设置 FifoLevel 中断门限为 32 字节
+    write_reg_bit(REG_PACKET_CONFIG2, 6, 0)  # 设置数据处理模式为 连续模式
+    
+    # 设置 REG_PA_DAC 寄存器，调整 PA 输出功率
+    write_reg_bit(REG_PA_DAC, 2, 1)  # 设置 PA 输出功率为 20 dBm
+    write_reg_bit(REG_PA_DAC, 1, 1)  # 设置 PA 输出功率为 20 dBm
+    write_reg_bit(REG_PA_DAC, 0, 1)  # 设置 PA 输出功率为 20 dBm
     
     # 设置 REG_OP_MODE 寄存器，进入 Standby 模式  
     print("尝试进入待机模式")
@@ -327,23 +237,8 @@ def sx1278_init(air_frequency, air_bitrate, module_depth):
     else:
         print("待机模式：晶体振荡器正在运行\n")
 
-# 发送一段数据
+# 进入发送模式
 def sx1278_send(data):
-
-    # 设置 REG_OP_MODE 寄存器，进入 FSTx 模式
-    print("尝试进入 FSTX 模式")
-    write_reg_bit(REG_OP_MODE, 2, 0)  # 设置为 FSTx 模式
-    write_reg_bit(REG_OP_MODE, 1, 1)  # 设置为 FSTx 模式
-    write_reg_bit(REG_OP_MODE, 0, 0)  # 设置为 FSTx 模式
-    # 读取 IRQ_FLAGS1 寄存器中的第 7 位验证是否准备完成
-    n = 0
-    while (read_reg_bit(REG_IRQ_FLAGS1, 7)) == 0 and n <= 20:
-        time.sleep_ms(100)
-        n = n + 1
-    if n >= 10:
-        print("未进入 FSTx 模式：", hex(read_reg(REG_IRQ_FLAGS1)))
-    else:
-        print("FSTX 模式：PLL 成功被锁定\n")
 
     # 设置 REG_OP_MODE 寄存器，进入 TX 模式
     print("尝试进入 TX 模式")
@@ -359,26 +254,13 @@ def sx1278_send(data):
         print("未进入 TX 模式：", hex(read_reg(REG_IRQ_FLAGS1)))
     else:
         print("TX 模式：PA 斜升完成\n")
-
-    # 设置有效数据长度
-    write_reg(REG_PAYLOAD_LENGTH, len(data))
+        
+    # 转换为列表，准备发送
+    phrase = list(data)
+    print(phrase)
     
-    # 写入所有数据字节到 FIFO
-    for b in data:
-        write_reg(REG_FIFO, b)
-        # FIFO 到达门限，等待芯片发送数据以腾出空间
-        while read_reg_bit(REG_IRQ_FLAGS2, 5) == 1:
-            time.sleep_ms(10) 
-
-    # 读取 IRQ_FLAGS2 寄存器中的第 3 位验证是否发送完成
-    n = 0
-    while (read_reg_bit(REG_IRQ_FLAGS2, 3)) == 0 and n <= 20:
-        time.sleep_ms(100)
-        n = n + 1
-    if n >= 10:
-        print("完成指示超时：", hex(read_reg(REG_IRQ_FLAGS2)))
-    else:
-        print("数据已发送完成\n")
+    # 发送
+    morse.Morse(phrase)
 
     # 发送完成后，回到 Standby 模式
     
@@ -413,31 +295,27 @@ print("尝试建立 SPI 通信")
 spi = SPI(1, baudrate=SPI_BAUD, polarity=0, phase=0, sck=sck, mosi=mosi, miso=miso)
 
 # 验证通信是否成功
+n = 0
 time.sleep(0.5)
 ver = read_reg(REG_VERSION)
-if ver != 0x00 and ver != 0xFF:
-    print("SPI 通信建立成功\n")
-else:
-    raise RuntimeError("错误：SPI通信建立失败")
+while ver == 0x00 or ver == 0xFF:
+    ver = read_reg(REG_VERSION)
+    time.sleep(0.5)
+    if n >= 20:
+        raise RuntimeError("错误：SPI通信建立失败")
+    n = n + 1
+
+print("SPI 通信建立成功\n")
 
 # 输出基本信息
 print(f"芯片版本号: 0x{ver:X}")
 print(f"芯片完整修订版本号: {ver >> 4}")
 print(f"金属掩膜修订版本号: {ver & 0x0F}\n")
 
-print("工作初始化\n")
-sx1278_init(air_frequency=435400000, air_bitrate=4800, module_depth=0.5)
+# 库函数初始化
+wpm = 25
+morse = AutoMorse(9, wpm)
 
-print("开始测试发送随机数据包\n")
 while True:
-    
-    # 生成一个包含255个随机字节的列表
-    random_bytes = [random.randint(0, 255) for _ in range(255)]
-    # 将列表转换为bytes类型
-    msg = bytes(random_bytes)
-    # 打印发送的随机数据，方便调试
-    print("\n发送的数据:", msg.hex(), "\n")
-    
-    sx1278_send(msg)
-
-    time.sleep(0.5)
+    sx1278_init(air_frequency=145965000)
+    sx1278_send("TEST BEACON DE BG7ZDQ ")
